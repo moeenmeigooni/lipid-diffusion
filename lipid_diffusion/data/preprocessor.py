@@ -46,9 +46,10 @@ class LipidCoordinatePreprocessor:
             with open(file_path, 'r') as f:
                 for line in f:
                     if line.startswith('ATOM') or line.startswith('HETATM'):
-                        x = float(line[30:38])
-                        y = float(line[38:46])
-                        z = float(line[46:54])
+                        spl = line.split()
+                        x = float(spl[6])
+                        y = float(spl[7])
+                        z = float(spl[8])
                         coords.append([x, y, z])
             return np.array(coords)
             

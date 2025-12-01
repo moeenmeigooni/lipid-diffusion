@@ -58,8 +58,7 @@ def train_diffusion_model(
         avg_loss = epoch_loss / len(dataloader)
         losses.append(avg_loss)
         
-        if (epoch + 1) % 10 == 0:
-            print(f"Epoch {epoch+1}/{n_epochs}, Loss: {avg_loss:.6f}")
+        print(f"Epoch {epoch+1}/{n_epochs}, Loss: {avg_loss:.6f}")
     
     return losses
 
