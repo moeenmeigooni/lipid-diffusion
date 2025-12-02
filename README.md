@@ -1,6 +1,6 @@
 # lipid-diffusion
 
-DDPM for generating new lipid conformations from a library of existing structures.
+DDPM for generating lipid conformations
 
 ## Repository Structure
 
