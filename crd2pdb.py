@@ -77,6 +77,30 @@ def write_pdb_file(atoms, pdb_file):
         # Write END record
         f.write("END\n")
 
+def write_noh_pdb_file(atoms, pdb_file):
+    """Write heavy atoms to PDB format file."""
+    with open(pdb_file, 'w') as f:
+        # Write header
+        f.write("REMARK   Generated from CHARMM CRD file\n")
+
+        # Write ATOM records
+        serial_counter = 1
+        for atom in atoms:
+            if atom['atomName'][0] != 'H':
+                # PDB format specification:
+                # ATOM  serial name resName chainID resSeq    x       y       z     occupancy tempFactor
+                pdb_line = (
+                    f"ATOM  {serial_counter:>5d} {atom['atomName']:<4s} "
+                    f"{atom['resName']:<3s} {atom['chainID']:>1s}"
+                    f"{atom['resSeq']:>4d}    "
+                    f"{atom['x']:>8.3f}{atom['y']:>8.3f}{atom['z']:>8.3f}"
+                    f"  1.00  0.00           \n"
+                )
+                f.write(pdb_line)
+                serial_counter += 1
+
+        # Write END record
+        f.write("END\n")
 
 def convert_crd_to_pdb(crd_file, pdb_file):
     """Convert CHARMM CRD file to PDB format."""
@@ -89,11 +113,22 @@ def convert_crd_to_pdb(crd_file, pdb_file):
         print(f"Error converting file: {e}", file=sys.stderr)
         raise e
 
+def convert_crd_to_noh_pdb(crd_file, pdb_file):
+    """Convert CHARMM CRD file to PDB format."""
+    try:
+        atoms = parse_crd_file(crd_file)
+        write_noh_pdb_file(atoms, pdb_file)
+        print(f"Successfully converted {crd_file} to {pdb_file}")
+        print(f"Total atoms written: {len(atoms)}")
+    except Exception as e:
+        print(f"Error converting file: {e}", file=sys.stderr)
+        raise e
+
 def main():
     crd_files = sorted(glob.glob('popc/*/*.crd'))
     for crd_file in crd_files:
-        outname = str(Path(crd_file).with_suffix('.pdb'))
-        convert_crd_to_pdb(crd_file, outname)
+        outname = str(Path(crd_file).with_suffix('.noh.pdb'))
+        convert_crd_to_noh_pdb(crd_file, outname)
 
 if __name__ == '__main__':
     main()
