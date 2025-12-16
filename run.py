@@ -11,7 +11,8 @@ import glob
 
 from lipid_diffusion.data.preprocessor import LipidCoordinatePreprocessor
 from lipid_diffusion.data.dataset import LipidDataset
-from lipid_diffusion.models.transformer import AtomwiseTransformer
+#from lipid_diffusion.models.transformer import AtomwiseTransformer
+from lipid_diffusion.models.gnn import LipidGraphNetwork
 from lipid_diffusion.models.diffusion import DiffusionModel
 from lipid_diffusion.training.trainer import train_diffusion_model, generate_samples
 
@@ -106,13 +107,23 @@ def main():
     device = 'mps' if torch.backends.mps.is_available() else 'cpu'
     print(f"Using device: {device}")
     
-    model = AtomwiseTransformer(
+    #model = AtomwiseTransformer(
+    #    n_atoms=n_atoms,
+    #    hidden_dim=512,
+    #    n_heads=4,
+    #    n_layers=5
+    #)
+    
+    model = LipidGraphNetwork(
         n_atoms=n_atoms,
         hidden_dim=256,
-        n_heads=4,
-        n_layers=4
+        num_layers=4,
+        num_heads=4,
+        num_rbf=16,
+        cutoff=14.0,
+        dropout=0.1
     )
-    
+
     diffusion = DiffusionModel(
         model=model,
         n_timesteps=1000,
