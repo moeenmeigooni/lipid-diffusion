@@ -32,12 +32,14 @@ class EdgeFeatureExtractor(nn.Module):
     Extract edge features between atoms based on distances and relative positions.
     """
     
-    def __init__(self, hidden_dim: int, num_rbf: int = 16, cutoff: float = 10.0):
+    def __init__(self, hidden_dim: int, num_rbf: int = 50, cutoff: float = 5.0):
         super().__init__()
         self.cutoff = cutoff
         self.num_rbf = num_rbf
-        
+
         # Radial basis functions for distance encoding
+        # Using 50 RBFs over 5 Å gives ~20 RBFs in the critical bond region (0-2 Å)
+        # with 0.1 Å resolution, compared to previous 3 RBFs with 0.667 Å resolution
         self.rbf_centers = nn.Parameter(
             torch.linspace(0, cutoff, num_rbf),
             requires_grad=False
@@ -250,10 +252,12 @@ class LipidGraphNetwork(nn.Module):
         hidden_dim: int = 128,
         num_layers: int = 4,
         num_heads: int = 4,
-        num_rbf: int = 16,
-        cutoff: float = 10.0,
+        num_rbf: int = 50,
+        cutoff: float = 5.0,
         time_dim: int = 64,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        num_atom_types: int = 4,
+        use_atom_types: bool = True
     ):
         """
         Args:
@@ -261,17 +265,20 @@ class LipidGraphNetwork(nn.Module):
             hidden_dim: Hidden dimension size
             num_layers: Number of graph conv layers
             num_heads: Number of attention heads
-            num_rbf: Number of radial basis functions for distance encoding
-            cutoff: Distance cutoff for edges (Angstroms)
+            num_rbf: Number of radial basis functions for distance encoding (50 for better bond resolution)
+            cutoff: Distance cutoff for edges (Angstroms) - 5.0 focuses on local bonded structure
             time_dim: Dimension for time embeddings
             dropout: Dropout rate
+            num_atom_types: Number of unique atom types (e.g., 4 for C, N, O, P)
+            use_atom_types: Whether to use atom type embeddings
         """
         super().__init__()
         
         self.n_atoms = n_atoms
         self.hidden_dim = hidden_dim
         self.cutoff = cutoff
-        
+        self.use_atom_types = use_atom_types
+
         # Time embedding
         self.time_mlp = nn.Sequential(
             SinusoidalPositionEmbeddings(time_dim),
@@ -279,10 +286,17 @@ class LipidGraphNetwork(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim)
         )
-        
-        # Initial node feature projection (from 3D coordinates)
+
+        # Atom type embedding
+        if use_atom_types:
+            self.atom_type_embedding = nn.Embedding(num_atom_types, hidden_dim // 2)
+            coord_input_dim = 3 + hidden_dim // 2
+        else:
+            coord_input_dim = 3
+
+        # Initial node feature projection (from 3D coordinates + atom types)
         self.node_embedding = nn.Sequential(
-            nn.Linear(3, hidden_dim),
+            nn.Linear(coord_input_dim, hidden_dim),
             nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim)
         )
@@ -303,23 +317,35 @@ class LipidGraphNetwork(nn.Module):
             nn.Linear(hidden_dim, 3)  # Predict 3D noise vector
         )
         
-    def forward(self, x, t):
+    def forward(self, x, t, atom_types=None):
         """
         Args:
             x: (batch, n_atoms, 3) coordinates
             t: (batch,) timesteps
-            
+            atom_types: (batch, n_atoms) or (n_atoms,) atom type indices (optional)
+
         Returns:
             noise_pred: (batch, n_atoms, 3) predicted noise
         """
         batch_size = x.shape[0]
-        
+
         # Time embedding
         t_emb = self.time_mlp(t)  # (batch, hidden_dim)
-        
-        # Initial node features from coordinates
-        node_features = self.node_embedding(x)  # (batch, n_atoms, hidden_dim)
-        
+
+        # Combine coordinates with atom type features
+        if self.use_atom_types and atom_types is not None:
+            # Handle both batched and unbatched atom_types
+            if atom_types.dim() == 1:
+                atom_types = atom_types.unsqueeze(0).expand(batch_size, -1)
+
+            atom_type_feats = self.atom_type_embedding(atom_types)  # (batch, n_atoms, hidden_dim//2)
+            node_input = torch.cat([x, atom_type_feats], dim=-1)  # (batch, n_atoms, 3 + hidden_dim//2)
+        else:
+            node_input = x
+
+        # Initial node features from coordinates + atom types
+        node_features = self.node_embedding(node_input)  # (batch, n_atoms, hidden_dim)
+
         # Add time embedding to all nodes
         node_features = node_features + t_emb.unsqueeze(1)
         
@@ -354,8 +380,8 @@ class EquivariantGraphNetwork(nn.Module):
         n_atoms: int,
         hidden_dim: int = 128,
         num_layers: int = 4,
-        num_rbf: int = 16,
-        cutoff: float = 10.0,
+        num_rbf: int = 50,
+        cutoff: float = 5.0,
         time_dim: int = 64
     ):
         """
@@ -363,8 +389,8 @@ class EquivariantGraphNetwork(nn.Module):
             n_atoms: Number of atoms in lipid
             hidden_dim: Hidden dimension for scalar features
             num_layers: Number of message passing layers
-            num_rbf: Number of radial basis functions
-            cutoff: Distance cutoff for edges
+            num_rbf: Number of radial basis functions (50 for better bond resolution)
+            cutoff: Distance cutoff for edges (5.0 Å focuses on bonded structure)
             time_dim: Dimension for time embeddings
         """
         super().__init__()
@@ -385,6 +411,7 @@ class EquivariantGraphNetwork(nn.Module):
         self.scalar_embedding = nn.Linear(1, hidden_dim)  # Just a placeholder
         
         # RBF for distance encoding
+        # Using 50 RBFs over 5 Å gives better resolution for bond distances
         self.num_rbf = num_rbf
         self.rbf_centers = nn.Parameter(
             torch.linspace(0, cutoff, num_rbf),

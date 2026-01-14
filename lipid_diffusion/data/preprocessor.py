@@ -17,6 +17,7 @@ class LipidCoordinatePreprocessor:
         self.mean = None
         self.std = None
         self.reference_structure = None
+        self.atom_types = None
         
     def load_coordinates(self, file_path: str, format='xyz') -> np.ndarray:
         """
@@ -47,9 +48,9 @@ class LipidCoordinatePreprocessor:
                 for line in f:
                     if line.startswith('ATOM') or line.startswith('HETATM'):
                         spl = line.split()
-                        x = float(spl[6])
-                        y = float(spl[7])
-                        z = float(spl[8])
+                        x = float(spl[5])
+                        y = float(spl[6])
+                        z = float(spl[7])
                         coords.append([x, y, z])
             return np.array(coords)
             
@@ -58,7 +59,51 @@ class LipidCoordinatePreprocessor:
             
         else:
             raise ValueError(f"Unsupported format: {format}")
-    
+
+    def load_atom_types(self, file_path: str, format='xyz') -> np.ndarray:
+        """
+        Load atom types from coordinate files.
+
+        Args:
+            file_path: Path to coordinate file
+            format: 'xyz', 'pdb', or 'npy'
+
+        Returns:
+            atom_types: (n_atoms,) array of element symbols (e.g., ['C', 'N', 'O', 'P'])
+        """
+        if format == 'xyz':
+            # XYZ format: atom_symbol x y z
+            atom_types = []
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+                for line in lines[2:]:  # Skip first two lines
+                    parts = line.strip().split()
+                    if len(parts) >= 4:
+                        # Extract element symbol (first column)
+                        atom_types.append(parts[0])
+            return np.array(atom_types)
+
+        elif format == 'pdb':
+            # PDB format: extract from atom names
+            atom_types = []
+            with open(file_path, 'r') as f:
+                for line in f:
+                    if line.startswith('ATOM') or line.startswith('HETATM'):
+                        # Extract atom name from columns 13-16 (standard PDB format)
+                        atom_name = line[12:16].strip()
+                        # Get element by removing digits (e.g., C12 -> C, O13 -> O)
+                        element = ''.join([c for c in atom_name if not c.isdigit()])
+                        atom_types.append(element)
+            return np.array(atom_types)
+
+        elif format == 'npy':
+            # For numpy format, atom types should be stored separately
+            # For now, return None and let the caller handle it
+            raise ValueError("Atom types not available from .npy format. Please provide separately.")
+
+        else:
+            raise ValueError(f"Unsupported format: {format}")
+
     def kabsch_align(self, coords: np.ndarray, reference: np.ndarray) -> np.ndarray:
         """
         Align coordinates to reference using Kabsch algorithm.
@@ -89,45 +134,48 @@ class LipidCoordinatePreprocessor:
         
         return aligned + reference.mean(axis=0)
     
-    def process_dataset(self, 
-                       file_paths: List[str], 
+    def process_dataset(self,
+                       file_paths: List[str],
                        format='xyz',
-                       align=True) -> np.ndarray:
+                       align=True):
         """
         Process multiple conformations into a dataset.
-        
+
         Args:
             file_paths: List of paths to coordinate files
             format: File format
             align: Whether to align all structures
-            
+
         Returns:
-            dataset: (n_conformations, n_atoms, 3) array
+            dataset_normalized: (n_conformations, n_atoms, 3) array of normalized coordinates
+            atom_types: (n_atoms,) array of element symbols
         """
         conformations = []
-        
-        # Load first structure as reference
+
+        # Load first structure as reference and extract atom types
         first_coords = self.load_coordinates(file_paths[0], format)
+        atom_types = self.load_atom_types(file_paths[0], format)
         self.reference_structure = first_coords
+        self.atom_types = atom_types  # Store for later use
         conformations.append(first_coords)
-        
+
         # Load and optionally align remaining structures
         for file_path in file_paths[1:]:
             coords = self.load_coordinates(file_path, format)
-            
+
             if align and self.align_method == 'kabsch':
                 coords = self.kabsch_align(coords, self.reference_structure)
-            
+
             conformations.append(coords)
-        
+
         dataset = np.array(conformations)
-        
+
         # Normalize
         self.mean = dataset.mean(axis=(0, 1))
         self.std = dataset.std(axis=(0, 1))
         dataset_normalized = (dataset - self.mean) / (self.std + 1e-8)
-        
-        return dataset_normalized
+
+        return dataset_normalized, atom_types
     
     def denormalize(self, coords: np.ndarray) -> np.ndarray:
         """Denormalize coordinates back to original scale."""

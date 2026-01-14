@@ -73,39 +73,41 @@ class DiffusionModel:
         
         return sqrt_alphas_cumprod_t * x_0 + sqrt_one_minus_alphas_cumprod_t * noise
     
-    def p_losses(self, x_0, t):
+    def p_losses(self, x_0, t, atom_types=None):
         """
         Training loss: predict the noise added to data.
-        
+
         Args:
             x_0: (batch, n_atoms, 3) clean data
             t: (batch,) timesteps
-            
+            atom_types: (batch, n_atoms) or (n_atoms,) atom type indices (optional)
+
         Returns:
             loss: MSE between true and predicted noise
         """
         noise = torch.randn_like(x_0)
         x_t = self.q_sample(x_0, t, noise=noise)
-        
-        predicted_noise = self.model(x_t, t)
-        
+
+        predicted_noise = self.model(x_t, t, atom_types=atom_types)
+
         loss = F.mse_loss(noise, predicted_noise)
         return loss
     
     @torch.no_grad()
-    def p_sample(self, x_t, t):
+    def p_sample(self, x_t, t, atom_types=None):
         """
         Reverse diffusion: denoise one step.
-        
+
         Args:
             x_t: (batch, n_atoms, 3) noisy data at timestep t
             t: (batch,) timesteps
-            
+            atom_types: (batch, n_atoms) or (n_atoms,) atom type indices (optional)
+
         Returns:
             x_{t-1}: (batch, n_atoms, 3) less noisy data
         """
         # Model prediction
-        predicted_noise = self.model(x_t, t)
+        predicted_noise = self.model(x_t, t, atom_types=atom_types)
         
         # Extract values for this timestep
         alpha_t = self.alphas[t][:, None, None]
@@ -136,23 +138,24 @@ class DiffusionModel:
         return pred_prev_sample
     
     @torch.no_grad()
-    def sample(self, shape, device='cpu'):
+    def sample(self, shape, device='cpu', atom_types=None):
         """
         Generate new samples via reverse diffusion.
-        
+
         Args:
             shape: (batch_size, n_atoms, 3) shape of samples
             device: Device to generate on
-            
+            atom_types: (n_atoms,) atom type indices (optional)
+
         Returns:
             samples: (batch_size, n_atoms, 3) generated conformations
         """
         # Start from pure noise
         x = torch.randn(shape, device=device)
-        
+
         # Gradually denoise
         for t in reversed(range(self.n_timesteps)):
             t_batch = torch.full((shape[0],), t, device=device, dtype=torch.long)
-            x = self.p_sample(x, t_batch)
-        
+            x = self.p_sample(x, t_batch, atom_types=atom_types)
+
         return x

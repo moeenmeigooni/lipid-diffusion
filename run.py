@@ -6,14 +6,16 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, random_split
 import matplotlib.pyplot as plt
+from natsort import natsorted
 import random
 import glob
 
 from lipid_diffusion.data.preprocessor import LipidCoordinatePreprocessor
 from lipid_diffusion.data.dataset import LipidDataset
-#from lipid_diffusion.models.transformer import AtomwiseTransformer
+from lipid_diffusion.models.transformer import AtomwiseTransformer
 from lipid_diffusion.models.gnn import LipidGraphNetwork
 from lipid_diffusion.models.diffusion import DiffusionModel
+from lipid_diffusion.models.flow_matching import FlowMatchingTrainer
 from lipid_diffusion.training.trainer import train_diffusion_model, generate_samples
 
 def write_xyz(coordinates, filename):
@@ -78,16 +80,18 @@ def main():
     # 1. Load and preprocess data
     print("Loading coordinate data...")
     preprocessor = LipidCoordinatePreprocessor()
-    
-    file_paths = sorted(glob.glob('popc/*/*.noh.pdb'))
+
+    file_paths = natsorted(glob.glob('../pdbs/conf*.pdb'))
     random.shuffle(file_paths)
-    coords_normalized = preprocessor.process_dataset(file_paths, format='pdb')
+    coords_normalized, atom_types = preprocessor.process_dataset(file_paths, format='pdb')
     n_atoms = coords_normalized.shape[1]
-    
+
     print(f"Loaded {len(coords_normalized)} conformations with {coords_normalized.shape[1]} atoms each")
-    
+    unique_types, counts = np.unique(atom_types, return_counts=True)
+    print(f"Atom types: {dict(zip(unique_types, counts))}")
+
     # 2. Split dataset into train and test sets (80/20 split)
-    dataset = LipidDataset(coords_normalized)
+    dataset = LipidDataset(coords_normalized, atom_types)
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
 
@@ -106,29 +110,39 @@ def main():
     # 3. Initialize model
     device = 'mps' if torch.backends.mps.is_available() else 'cpu'
     print(f"Using device: {device}")
-    
+
     #model = AtomwiseTransformer(
     #    n_atoms=n_atoms,
-    #    hidden_dim=512,
+    #    hidden_dim=256,
     #    n_heads=4,
-    #    n_layers=5
+    #    n_layers=5,
+    #    num_atom_types=dataset.num_atom_types,
+    #    use_atom_types=True
     #)
-    
+
     model = LipidGraphNetwork(
         n_atoms=n_atoms,
-        hidden_dim=256,
+        hidden_dim=512,
         num_layers=4,
         num_heads=4,
-        num_rbf=16,
-        cutoff=14.0,
-        dropout=0.1
+        num_rbf=50,  # Increased from 16 for better bond resolution
+        cutoff=5.0,   # Reduced from 15.0 to focus on bonded interactions
+        dropout=0.05,
+        num_atom_types=dataset.num_atom_types,
+        use_atom_types=True
     )
 
-    diffusion = DiffusionModel(
+    #diffusion = DiffusionModel(
+    #    model=model,
+    #    n_timesteps=1000,
+    #    beta_start=1e-4,
+    #    beta_end=2e-2
+    #)
+
+    diffusion = FlowMatchingTrainer(  # Same variable name for compatibility
         model=model,
-        n_timesteps=1000,
-        beta_start=1e-4,
-        beta_end=1e-3
+        noise_schedule='vp',  # 'ot' or 'vp'
+        stochastic=False      # True for stochastic sampling
     )
     
     # Move diffusion schedule to device
@@ -163,8 +177,14 @@ def main():
         diffusion=diffusion,
         n_samples=10,
         n_atoms=n_atoms,
-        device=device
+        device=device,
+        atom_types=dataset.atom_type_indices.to(device)
     )
+    #new_conformations = diffusion.sample(
+    #    shape=(10, 52, 3),
+    #    method='rk4',
+    #    num_steps=25  # Much faster than diffusion!
+    #).cpu()
     
     # Denormalize
     new_conformations_real = preprocessor.denormalize(new_conformations)

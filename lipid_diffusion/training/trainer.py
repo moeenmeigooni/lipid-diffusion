@@ -54,43 +54,59 @@ def train_diffusion_model(
         # Training phase
         model.train()
         train_epoch_loss = 0.0
-        
-        for batch in train_dataloader:
+
+        for batch_data in train_dataloader:
+            # Handle both (coords,) and (coords, atom_types) returns
+            if isinstance(batch_data, (list, tuple)) and len(batch_data) == 2:
+                batch, atom_types = batch_data
+                atom_types = atom_types[0].to(device)  # Same for all samples in batch
+            else:
+                batch = batch_data
+                atom_types = None
+
             batch = batch.to(device)
             batch_size = batch.shape[0]
-            
+
             # Sample random timesteps
             t = torch.randint(0, diffusion.n_timesteps, (batch_size,), device=device)
-            
-            # Compute loss
-            loss = diffusion.p_losses(batch, t)
-            
+
+            # Compute loss (pass atom_types)
+            loss = diffusion.p_losses(batch, t, atom_types=atom_types)
+
             # Optimize
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+
             train_epoch_loss += loss.item()
-        
+
         avg_train_loss = train_epoch_loss / len(train_dataloader)
         train_losses.append(avg_train_loss)
-        
+
         # Evaluation phase
         model.eval()
         test_epoch_loss = 0.0
-        
+
         with torch.no_grad():
-            for batch in test_dataloader:
+            for batch_data in test_dataloader:
+                # Handle both (coords,) and (coords, atom_types) returns
+                if isinstance(batch_data, (list, tuple)) and len(batch_data) == 2:
+                    batch, atom_types = batch_data
+                    atom_types = atom_types[0].to(device)  # Same for all samples
+                else:
+                    batch = batch_data
+                    atom_types = None
+
                 batch = batch.to(device)
                 batch_size = batch.shape[0]
-                
+
                 # Sample random timesteps
                 t = torch.randint(0, diffusion.n_timesteps, (batch_size,), device=device)
-                
-                # Compute loss
-                loss = diffusion.p_losses(batch, t)
+
+                # Compute loss (pass atom_types)
+                loss = diffusion.p_losses(batch, t, atom_types=atom_types)
                 test_epoch_loss += loss.item()
-        
+
         avg_test_loss = test_epoch_loss / len(test_dataloader)
         test_losses.append(avg_test_loss)
         
@@ -137,20 +153,22 @@ def generate_samples(
     diffusion: DiffusionModel,
     n_samples: int,
     n_atoms: int,
-    device: str = 'cpu'
+    device: str = 'cpu',
+    atom_types=None
 ) -> np.ndarray:
     """
     Generate new lipid conformations.
-    
+
     Args:
         diffusion: Trained DiffusionModel
         n_samples: Number of conformations to generate
         n_atoms: Number of atoms per lipid
         device: Device to generate on
-        
+        atom_types: (n_atoms,) atom type indices (optional)
+
     Returns:
         samples: (n_samples, n_atoms, 3) generated coordinates
     """
     shape = (n_samples, n_atoms, 3)
-    samples = diffusion.sample(shape, device=device)
+    samples = diffusion.sample(shape, device=device, atom_types=atom_types)
     return samples.cpu().numpy()
